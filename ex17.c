@@ -10,11 +10,12 @@
 struct Address {
   int id;
   int set;
-  char name[MAX_DATA];
-  char email[MAX_DATA];
+  char *name;
+  char *email;
 };
 
 struct Database {
+  int max_data;
   int max_rows;
   struct Address *rows;
 };
@@ -51,9 +52,13 @@ void Database_load(struct Connection *conn)
   if (rc != 1)
     die("Failed to load database.", conn);
 
+  rc = fread(&conn->db->max_data, sizeof(int), 1, conn->file);
+  if (rc != 1)
+    die("Failed to load max_data info.", conn);
+
   rc = fread(&conn->db->max_rows, sizeof(int), 1, conn->file);
   if (rc != 1)
-    die("Failed to load database.", conn);
+    die("Failed to load max_rows info.", conn);
 
   conn->db->rows = malloc(sizeof(struct Address) * conn->db->max_rows);
   if (!conn->db->rows)
@@ -61,7 +66,19 @@ void Database_load(struct Connection *conn)
 
   rc = fread(conn->db->rows, sizeof(struct Address) * conn->db->max_rows, 1, conn->file);
   if (rc != 1)
-    die("Failed to load database.", conn);
+    die("Failed to load database rows.", conn);
+
+  for (int i = 0; i < conn->db->max_rows; i++) {
+    conn->db->rows[i].name = malloc(conn->db->max_data);
+    rc = fread(&conn->db->rows[i].name, conn->db->max_data, 1, conn->file);
+    if (rc != 1)
+      die("Failed to load database address name.", conn);
+
+    conn->db->rows[i].email = malloc(conn->db->max_data);
+    rc = fread(&conn->db->rows[i].email, conn->db->max_data, 1, conn->file);
+    if (rc != 1)
+      die("Failed to load database address email.", conn);
+  }
 }
 
 struct Connection *Database_open(const char *filename, char mode)
@@ -109,6 +126,10 @@ void Database_write(struct Connection *conn)
   if (rc != 1)
     die("Failed to write to database.", conn);
 
+  rc = fwrite(&conn->db->max_data, sizeof(int), 1, conn->file);
+  if (rc != 1)
+    die("Failed to write to database.", conn);
+
   rc = fwrite(&conn->db->max_rows, sizeof(int), 1, conn->file);
   if (rc != 1)
     die("Failed to write to database.", conn);
@@ -117,16 +138,32 @@ void Database_write(struct Connection *conn)
   if (rc != 1)
     die("Failed to write to database.", conn);
 
+  for (int i=0; i < conn->db->max_rows; i++) {
+    rc = fwrite(&conn->db->rows[i].name, conn->db->max_data, 1, conn->file);
+    if (rc != 1)
+      die("Failed to write to database", conn);
+    fseek(conn->file, -1, SEEK_CUR);
+    char *some_name = "";
+    int read = fread(some_name, conn->db->max_data, 1, conn->file);
+    if (read == 0)
+      die("blablabla", conn);
+
+    rc = fwrite(&conn->db->rows[i].email, conn->db->max_data, 1, conn->file);
+    if (rc != 1)
+      die("Failed to write to database", conn);
+  }
+
   rc = fflush(conn->file);
   if (rc == -1)
     die("Cannot flush database.", conn);
 }
 
-void Database_create(struct Connection *conn, int max_rows)
+void Database_create(struct Connection *conn, int max_rows, int max_data)
 {
   int i = 0;
 
   conn->db->max_rows = max_rows;
+  conn->db->max_data = max_data;
   conn->db->rows = malloc(sizeof(struct Address)*conn->db->max_rows);
 
   for (i = 0; i < conn->db->max_rows; i++) {
@@ -141,23 +178,29 @@ void Database_set(struct Connection *conn, int id, const char *name, const char 
   if (addr->set)
     die("Already set, delete it first", conn);
 
+  if (addr->name == NULL)
+    addr->name = malloc(conn->db->max_data);
+
+  if (addr->email == NULL)
+    addr->email = malloc(conn->db->max_data);
+
   addr->set = 1;
   char *res = "";
-  if (strlen(name) >= MAX_DATA) {
-    res = strncpy(addr->name, name, MAX_DATA);
-    res[MAX_DATA - 1] = '\0';
+  if (strlen(name) >= conn->db->max_data) {
+    res = strncpy(addr->name, name, conn->db->max_data);
+    res[conn->db->max_data - 1] = '\0';
   } else {
-    res = strncpy(addr->name, name, MAX_DATA);
+    res = strncpy(addr->name, name, conn->db->max_data);
   }
 
   if (!res)
     die("Name copy failed", conn);
 
-  if (strlen(email) >= MAX_DATA) {
-    res = strncpy(addr->email, email, MAX_DATA);
-    res[MAX_DATA - 1] = '\0';
+  if (strlen(email) >= conn->db->max_data) {
+    res = strncpy(addr->email, email, conn->db->max_data);
+    res[conn->db->max_data - 1] = '\0';
   } else {
-    res = strncpy(addr->email, email, MAX_DATA);
+    res = strncpy(addr->email, email, conn->db->max_data);
   }
 
   if (!res)
@@ -186,7 +229,7 @@ void Database_list(struct Connection *conn)
   int i = 0;
   struct Database *db = conn->db;
 
-  for (i = 0; i < MAX_ROWS; i++) {
+  for (i = 0; i < conn->db->max_rows; i++) {
     struct Address *cur = &db->rows[i];
 
     if (cur->set) {
@@ -202,9 +245,11 @@ int main(int argc, char *argv[])
 
   char *filename = argv[1];
   char action = argv[2][0];
+  int max_data = MAX_DATA;
   int max_rows = MAX_ROWS;
   if (action == 'c') {
     max_rows = atoi(argv[3]);
+    max_data = atoi(argv[4]);
   }
 
   struct Connection *conn = Database_open(filename, action);
@@ -216,7 +261,7 @@ int main(int argc, char *argv[])
 
   switch (action) {
     case 'c':
-      Database_create(conn, max_rows);
+      Database_create(conn, max_rows, max_data);
       Database_write(conn);
       break;
     
